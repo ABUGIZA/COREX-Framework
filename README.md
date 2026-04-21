@@ -3,9 +3,20 @@
 > FiveM Zombie-Survival framework — Lua 5.4, oxmysql, StateBag sync.
 
 📖 **Full Documentation:** <https://corex-zombies.gitbook.io/corex-docs>
+💬 **Discord Community:** <https://discord.gg/G95rtnb9sg>
 
 ## Resources
 `corex-core` • `corex-spawn` • `corex-inventory` • `corex-weather` • `corex-death` • `corex-crafting` • `corex-hud` • `corex-events`
+
+---
+
+## 🎬 Video Tutorial
+
+Full install & run walkthrough:
+
+[![Watch the video](https://img.youtube.com/vi/vSct4sr6mgs/maxresdefault.jpg)](https://youtu.be/vSct4sr6mgs)
+
+▶ <https://youtu.be/vSct4sr6mgs>
 
 ---
 
@@ -28,7 +39,24 @@ copy server.cfg.example server.cfg
 ```
 Edit and set:
 - `sv_licenseKey` → <https://keymaster.fivem.net/>
-- `mysql_connection_string` → `mysql://USER:PASSWORD@localhost/corex?charset=utf8mb4`
+- `mysql_connection_string` → pick the format that matches your MySQL setup:
+
+**A) MySQL WITH a password** (most production setups, MySQL Workbench, remote hosts)
+```cfg
+set mysql_connection_string "mysql://root:YOUR_PASSWORD@localhost/corex?charset=utf8mb4"
+```
+Example with a real password:
+```cfg
+set mysql_connection_string "mysql://root:A11223344@localhost/corex?charset=utf8mb4"
+```
+
+**B) MySQL WITHOUT a password** (XAMPP / Laragon / WAMP default root user)
+```cfg
+set mysql_connection_string "mysql://root@localhost/corex?charset=utf8mb4"
+```
+
+> Notice there is **no colon and no password** after `root` in option B.
+> Use this only if your `root` user has an empty password.
 
 ### 4. Create the database
 
