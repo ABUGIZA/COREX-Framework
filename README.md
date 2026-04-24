@@ -171,4 +171,4 @@ local Corex = exports['corex-core']:GetCoreObject()
 ---
 
 ## License
-Private — all rights reserved.
+Released under the [MIT License](LICENSE).
