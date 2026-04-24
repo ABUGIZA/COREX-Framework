@@ -17,7 +17,6 @@ files {
     'html/index.html',
     'html/style.css',
     'html/script.js',
-    'html/fonts/*.woff2'
 }
 
 client_scripts {

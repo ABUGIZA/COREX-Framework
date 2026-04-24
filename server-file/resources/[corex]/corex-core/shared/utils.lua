@@ -2,7 +2,11 @@ COREX = COREX or {}
 Corex = COREX
 COREX.Utils = {}
 
-math.randomseed(os.time() * 1000 + (GetGameTimer and GetGameTimer() or 0))
+local randomSeed = GetGameTimer and GetGameTimer() or 0
+if os and os.time then
+    randomSeed = randomSeed + (os.time() * 1000)
+end
+math.randomseed(randomSeed)
 
 function COREX.Utils.DeepCopy(tbl, visited)
     if type(tbl) ~= 'table' then return tbl end
