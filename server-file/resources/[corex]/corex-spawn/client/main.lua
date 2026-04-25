@@ -10,10 +10,19 @@ local isUIOpen = false
 local playerLoaded = false
 local currentSkin = {}
 local creationCam = nil
+local creationCamBaseOffset = { x = 0.0, y = 2.5, z = 0.5 }
+local defaultCreationCamTargetZ = 0.5
+local currentCreationCamTargetZ = defaultCreationCamTargetZ
+local minCreationCamTargetZ = -0.9
+local maxCreationCamTargetZ = 1.1
+local creationCamPanSensitivity = 0.005
 local hasSpawned = false
 local savedSkin = nil
 local spawnReadySent = false
 local spawnManagerGuardInstalled = false
+local currentCamFov = 45.0
+local minFov = 20.0
+local maxFov = 80.0
 
 -- Wait for corex-core
 CreateThread(function()
@@ -515,6 +524,8 @@ RegisterNetEvent('corex-spawn:client:spawnPlayer', function(data)
     end
 end)
 
+local ApplyDefaultFreemodeAppearance
+
 function LoadAndSetPlayerModel(modelName)
     Corex.Functions.LoadModel(modelName)
 
@@ -523,7 +534,7 @@ function LoadAndSetPlayerModel(modelName)
     Corex.Functions.SetModelAsNoLongerNeeded(modelHash)
 
     local ped = Corex.Functions.GetPed()
-    SetPedDefaultComponentVariation(ped)
+    ApplyDefaultFreemodeAppearance(ped, modelName)
 
     return ped
 end
@@ -536,6 +547,512 @@ local function IsPedUsingModel(ped, modelName)
     return GetEntityModel(ped) == GetHashKey(modelName)
 end
 
+local function GetMaxVariationIndex(count, emptyValue)
+    count = tonumber(count) or 0
+    if count <= 0 then
+        return emptyValue or 0
+    end
+
+    return count - 1
+end
+
+local function ClampVariationIndex(value, minValue, maxValue)
+    value = tonumber(value)
+    if not value or value ~= value then
+        return minValue
+    end
+
+    value = math.floor(value)
+    if value < minValue then
+        return minValue
+    end
+
+    if value > maxValue then
+        return maxValue
+    end
+
+    return value
+end
+
+local function NormalizeComponentVariation(ped, componentId, drawableId, textureId)
+    componentId = tonumber(componentId)
+    if not ped or ped == 0 or not componentId then
+        return nil, nil, nil, nil
+    end
+
+    local maxDrawable = GetMaxVariationIndex(GetNumberOfPedDrawableVariations(ped, componentId), 0)
+    local drawable = ClampVariationIndex(drawableId, 0, maxDrawable)
+    local maxTexture = GetMaxVariationIndex(GetNumberOfPedTextureVariations(ped, componentId, drawable), 0)
+    local texture = ClampVariationIndex(textureId or 0, 0, maxTexture)
+
+    return drawable, texture, maxDrawable, maxTexture
+end
+
+local function NormalizePropVariation(ped, propId, drawableId, textureId)
+    propId = tonumber(propId)
+    if not ped or ped == 0 or not propId then
+        return nil, nil, nil, nil
+    end
+
+    local maxDrawable = GetMaxVariationIndex(GetNumberOfPedPropDrawableVariations(ped, propId), -1)
+    local drawable = ClampVariationIndex(drawableId, -1, maxDrawable)
+
+    if drawable == -1 then
+        return drawable, 0, maxDrawable, 0
+    end
+
+    local maxTexture = GetMaxVariationIndex(GetNumberOfPedPropTextureVariations(ped, propId, drawable), 0)
+    local texture = ClampVariationIndex(textureId or 0, 0, maxTexture)
+
+    return drawable, texture, maxDrawable, maxTexture
+end
+
+local FACE_FEATURE_KEYS = {
+    'noseWidth',
+    'nosePeakHigh',
+    'nosePeakSize',
+    'noseBoneHigh',
+    'nosePeakLowering',
+    'noseBoneTwist',
+    'eyeBrownHigh',
+    'eyeBrownForward',
+    'cheeksBoneHigh',
+    'cheeksBoneWidth',
+    'cheeksWidth',
+    'eyesOpening',
+    'lipsThickness',
+    'jawBoneWidth',
+    'jawBoneBackSize',
+    'chinBoneLowering',
+    'chinBoneLenght',
+    'chinBoneSize',
+    'chinHole',
+    'neckThickness'
+}
+
+local HEAD_OVERLAYS = {
+    { key = 'blemishes', index = 0 },
+    { key = 'beard', index = 1, colorType = 1 },
+    { key = 'eyebrows', index = 2, colorType = 1 },
+    { key = 'ageing', index = 3 },
+    { key = 'makeUp', index = 4, colorType = 2 },
+    { key = 'blush', index = 5, colorType = 2 },
+    { key = 'complexion', index = 6 },
+    { key = 'sunDamage', index = 7 },
+    { key = 'lipstick', index = 8, colorType = 2 },
+    { key = 'moleAndFreckles', index = 9 },
+    { key = 'chestHair', index = 10, colorType = 1 },
+    { key = 'bodyBlemishes', index = 11 }
+}
+
+local DEFAULT_HEAD_BLEND_BY_MODEL = {
+    [Config.DefaultMaleModel] = {
+        shapeFirst = 0,
+        shapeSecond = 0,
+        shapeThird = 0,
+        skinFirst = 0,
+        skinSecond = 0,
+        skinThird = 0,
+        shapeMix = 0.0,
+        skinMix = 0.0,
+        thirdMix = 0.0
+    },
+    [Config.DefaultFemaleModel] = {
+        shapeFirst = 45,
+        shapeSecond = 21,
+        shapeThird = 0,
+        skinFirst = 20,
+        skinSecond = 15,
+        skinThird = 0,
+        shapeMix = 0.3,
+        skinMix = 0.1,
+        thirdMix = 0.0
+    }
+}
+
+local EYE_COLOR_MAX = 31
+
+local function RoundToStep(value, decimals)
+    decimals = decimals or 0
+    return tonumber(string.format('%.' .. decimals .. 'f', tonumber(value) or 0)) or 0
+end
+
+local function IsFreemodePed(ped)
+    if not ped or ped == 0 then
+        return false
+    end
+
+    local model = GetEntityModel(ped)
+    return model == GetHashKey(Config.DefaultMaleModel)
+        or model == GetHashKey(Config.DefaultFemaleModel)
+        or model == `mp_m_freemode_01`
+        or model == `mp_f_freemode_01`
+end
+
+local function GetCurrentModelName(ped)
+    if not ped or ped == 0 then
+        return Config.DefaultMaleModel
+    end
+
+    local model = GetEntityModel(ped)
+    if model == GetHashKey(Config.DefaultFemaleModel) then
+        return Config.DefaultFemaleModel
+    end
+
+    return Config.DefaultMaleModel
+end
+
+local function GetDefaultHeadBlend(modelName)
+    local defaults = DEFAULT_HEAD_BLEND_BY_MODEL[modelName or Config.DefaultMaleModel] or DEFAULT_HEAD_BLEND_BY_MODEL[Config.DefaultMaleModel]
+    local out = {}
+    for key, value in pairs(defaults) do
+        out[key] = value
+    end
+    return out
+end
+
+local function GetOverlayDefinition(overlayKey)
+    for _, overlay in ipairs(HEAD_OVERLAYS) do
+        if overlay.key == overlayKey then
+            return overlay
+        end
+    end
+    return nil
+end
+
+local function GetOverlayColorMax(overlay)
+    if not overlay or not overlay.colorType then
+        return 0
+    end
+
+    if overlay.colorType == 2 then
+        return GetMaxVariationIndex(GetNumMakeupColors(), 0)
+    end
+
+    return GetMaxVariationIndex(GetNumHairColors(), 0)
+end
+
+ApplyDefaultFreemodeAppearance = function(ped, modelName)
+    if not IsFreemodePed(ped) then
+        return
+    end
+
+    local defaults = GetDefaultHeadBlend(modelName)
+    SetPedDefaultComponentVariation(ped)
+    SetPedHeadBlendData(
+        ped,
+        defaults.shapeFirst,
+        defaults.shapeSecond,
+        defaults.shapeThird,
+        defaults.skinFirst,
+        defaults.skinSecond,
+        defaults.skinThird,
+        defaults.shapeMix + 0.0,
+        defaults.skinMix + 0.0,
+        defaults.thirdMix + 0.0,
+        false
+    )
+
+    for index = 0, #FACE_FEATURE_KEYS - 1 do
+        SetPedFaceFeature(ped, index, 0.0)
+    end
+
+    for _, overlay in ipairs(HEAD_OVERLAYS) do
+        SetPedHeadOverlay(ped, overlay.index, 0, 0.0)
+        if overlay.colorType then
+            SetPedHeadOverlayColor(ped, overlay.index, overlay.colorType, 0, 0)
+        end
+    end
+
+    SetPedHairColor(ped, 0, 0)
+    SetPedEyeColor(ped, 0)
+end
+
+local function GetHeadBlendValues(ped)
+    if not IsFreemodePed(ped) then
+        return GetDefaultHeadBlend(GetCurrentModelName(ped))
+    end
+
+    local shapeFirst, shapeSecond, shapeThird, skinFirst, skinSecond, skinThird, shapeMix, skinMix, thirdMix =
+        Citizen.InvokeNative(
+            0x2746BD9D88C5C5D0,
+            ped,
+            Citizen.PointerValueIntInitialized(0),
+            Citizen.PointerValueIntInitialized(0),
+            Citizen.PointerValueIntInitialized(0),
+            Citizen.PointerValueIntInitialized(0),
+            Citizen.PointerValueIntInitialized(0),
+            Citizen.PointerValueIntInitialized(0),
+            Citizen.PointerValueFloatInitialized(0),
+            Citizen.PointerValueFloatInitialized(0),
+            Citizen.PointerValueFloatInitialized(0)
+        )
+
+    shapeMix = math.min(1.0, math.max(0.0, tonumber(string.sub(tostring(shapeMix or 0), 1, 4)) or 0.0))
+    skinMix = math.min(1.0, math.max(0.0, tonumber(string.sub(tostring(skinMix or 0), 1, 4)) or 0.0))
+    thirdMix = math.min(1.0, math.max(0.0, tonumber(string.sub(tostring(thirdMix or 0), 1, 4)) or 0.0))
+
+    return {
+        shapeFirst = ClampVariationIndex(shapeFirst, 0, 45),
+        shapeSecond = ClampVariationIndex(shapeSecond, 0, 45),
+        shapeThird = ClampVariationIndex(shapeThird, 0, 45),
+        skinFirst = ClampVariationIndex(skinFirst, 0, 45),
+        skinSecond = ClampVariationIndex(skinSecond, 0, 45),
+        skinThird = ClampVariationIndex(skinThird, 0, 45),
+        shapeMix = RoundToStep(shapeMix, 1),
+        skinMix = RoundToStep(skinMix, 1),
+        thirdMix = RoundToStep(thirdMix, 1)
+    }
+end
+
+local function BuildHeadBlendUiData(ped)
+    local values = GetHeadBlendValues(ped)
+    local fields = {
+        shapeFirst = { min = 0, max = 45, step = 1 },
+        shapeSecond = { min = 0, max = 45, step = 1 },
+        shapeThird = { min = 0, max = 45, step = 1 },
+        skinFirst = { min = 0, max = 45, step = 1 },
+        skinSecond = { min = 0, max = 45, step = 1 },
+        skinThird = { min = 0, max = 45, step = 1 },
+        shapeMix = { min = 0, max = 1, step = 0.1 },
+        skinMix = { min = 0, max = 1, step = 0.1 },
+        thirdMix = { min = 0, max = 1, step = 0.1 }
+    }
+
+    local out = {}
+    for key, settings in pairs(fields) do
+        out[key] = {
+            value = values[key],
+            min = settings.min,
+            max = settings.max,
+            step = settings.step
+        }
+    end
+    return out
+end
+
+local function SetPedHeadBlendSafe(ped, headBlend)
+    if not IsFreemodePed(ped) then
+        return GetHeadBlendValues(ped)
+    end
+
+    local current = GetHeadBlendValues(ped)
+    local defaults = GetDefaultHeadBlend(GetCurrentModelName(ped))
+    local data = headBlend or {}
+
+    local result = {
+        shapeFirst = ClampVariationIndex(data.shapeFirst ~= nil and data.shapeFirst or current.shapeFirst or defaults.shapeFirst, 0, 45),
+        shapeSecond = ClampVariationIndex(data.shapeSecond ~= nil and data.shapeSecond or current.shapeSecond or defaults.shapeSecond, 0, 45),
+        shapeThird = ClampVariationIndex(data.shapeThird ~= nil and data.shapeThird or current.shapeThird or defaults.shapeThird, 0, 45),
+        skinFirst = ClampVariationIndex(data.skinFirst ~= nil and data.skinFirst or current.skinFirst or defaults.skinFirst, 0, 45),
+        skinSecond = ClampVariationIndex(data.skinSecond ~= nil and data.skinSecond or current.skinSecond or defaults.skinSecond, 0, 45),
+        skinThird = ClampVariationIndex(data.skinThird ~= nil and data.skinThird or current.skinThird or defaults.skinThird, 0, 45),
+        shapeMix = RoundToStep(math.max(0.0, math.min(1.0, tonumber(data.shapeMix ~= nil and data.shapeMix or current.shapeMix or defaults.shapeMix) or 0.0)), 1),
+        skinMix = RoundToStep(math.max(0.0, math.min(1.0, tonumber(data.skinMix ~= nil and data.skinMix or current.skinMix or defaults.skinMix) or 0.0)), 1),
+        thirdMix = RoundToStep(math.max(0.0, math.min(1.0, tonumber(data.thirdMix ~= nil and data.thirdMix or current.thirdMix or defaults.thirdMix) or 0.0)), 1)
+    }
+
+    SetPedHeadBlendData(
+        ped,
+        result.shapeFirst,
+        result.shapeSecond,
+        result.shapeThird,
+        result.skinFirst,
+        result.skinSecond,
+        result.skinThird,
+        result.shapeMix + 0.0,
+        result.skinMix + 0.0,
+        result.thirdMix + 0.0,
+        false
+    )
+
+    return result
+end
+
+local function GetFaceFeatureValues(ped)
+    local out = {}
+    for index, key in ipairs(FACE_FEATURE_KEYS) do
+        out[key] = RoundToStep(GetPedFaceFeature(ped, index - 1), 1)
+    end
+    return out
+end
+
+local function BuildFaceFeaturesUiData(ped)
+    local values = GetFaceFeatureValues(ped)
+    local out = {}
+    for _, key in ipairs(FACE_FEATURE_KEYS) do
+        out[key] = {
+            value = values[key],
+            min = -1,
+            max = 1,
+            step = 0.1
+        }
+    end
+    return out
+end
+
+local function SetPedFaceFeatureValue(ped, featureKey, value)
+    for index, key in ipairs(FACE_FEATURE_KEYS) do
+        if key == featureKey then
+            local safeValue = RoundToStep(math.max(-1.0, math.min(1.0, tonumber(value) or 0.0)), 1)
+            SetPedFaceFeature(ped, index - 1, safeValue + 0.0)
+            return safeValue
+        end
+    end
+    return nil
+end
+
+local function GetHeadOverlayValues(ped)
+    local out = {}
+    for _, overlay in ipairs(HEAD_OVERLAYS) do
+        local _, style, _, color, secondColor, opacity = GetPedHeadOverlayData(ped, overlay.index)
+        if style == 255 then
+            style = 0
+            opacity = 0
+        end
+
+        out[overlay.key] = {
+            style = ClampVariationIndex(style, 0, GetMaxVariationIndex(GetNumHeadOverlayValues(overlay.index), 0)),
+            opacity = RoundToStep(opacity or 0, 1),
+            color = ClampVariationIndex(color or 0, 0, GetOverlayColorMax(overlay)),
+            secondColor = ClampVariationIndex(secondColor or 0, 0, GetOverlayColorMax(overlay))
+        }
+    end
+    return out
+end
+
+local function BuildHeadOverlaysUiData(ped)
+    local values = GetHeadOverlayValues(ped)
+    local out = {}
+    for _, overlay in ipairs(HEAD_OVERLAYS) do
+        out[overlay.key] = {
+            style = values[overlay.key].style,
+            opacity = values[overlay.key].opacity,
+            color = values[overlay.key].color,
+            secondColor = values[overlay.key].secondColor,
+            maxStyle = GetMaxVariationIndex(GetNumHeadOverlayValues(overlay.index), 0),
+            maxColor = GetOverlayColorMax(overlay),
+            hasColor = overlay.colorType ~= nil
+        }
+    end
+    return out
+end
+
+local function SetPedHeadOverlayValue(ped, overlayKey, data)
+    local overlay = GetOverlayDefinition(overlayKey)
+    if not overlay then
+        return nil
+    end
+
+    local current = GetHeadOverlayValues(ped)[overlayKey] or {}
+    local maxStyle = GetMaxVariationIndex(GetNumHeadOverlayValues(overlay.index), 0)
+    local maxColor = GetOverlayColorMax(overlay)
+    local style = ClampVariationIndex(data.style ~= nil and data.style or current.style or 0, 0, maxStyle)
+    local opacity = RoundToStep(math.max(0.0, math.min(1.0, tonumber(data.opacity ~= nil and data.opacity or current.opacity or 0.0) or 0.0)), 1)
+
+    SetPedHeadOverlay(ped, overlay.index, style, opacity + 0.0)
+
+    local color = ClampVariationIndex(data.color ~= nil and data.color or current.color or 0, 0, maxColor)
+    local secondColor = ClampVariationIndex(data.secondColor ~= nil and data.secondColor or current.secondColor or 0, 0, maxColor)
+
+    if overlay.colorType then
+        SetPedHeadOverlayColor(ped, overlay.index, overlay.colorType, color, secondColor)
+    end
+
+    return {
+        style = style,
+        opacity = opacity,
+        color = color,
+        secondColor = secondColor,
+        maxStyle = maxStyle,
+        maxColor = maxColor,
+        hasColor = overlay.colorType ~= nil
+    }
+end
+
+local function GetHairValues(ped)
+    return {
+        style = GetPedDrawableVariation(ped, 2),
+        texture = GetPedTextureVariation(ped, 2),
+        color = ClampVariationIndex(GetPedHairColor(ped), 0, GetMaxVariationIndex(GetNumHairColors(), 0)),
+        highlight = ClampVariationIndex(GetPedHairHighlightColor(ped), 0, GetMaxVariationIndex(GetNumHairColors(), 0))
+    }
+end
+
+local function BuildHairUiData(ped)
+    local hair = GetHairValues(ped)
+    local maxColor = GetMaxVariationIndex(GetNumHairColors(), 0)
+    return {
+        color = { value = hair.color, min = 0, max = maxColor, step = 1 },
+        highlight = { value = hair.highlight, min = 0, max = maxColor, step = 1 }
+    }
+end
+
+local function SetPedHairSettings(ped, hair)
+    if not hair then
+        return GetHairValues(ped)
+    end
+
+    local current = GetHairValues(ped)
+    local style = current.style
+    local texture = current.texture
+
+    if hair.style ~= nil or hair.texture ~= nil then
+        style, texture = NormalizeComponentVariation(
+            ped,
+            2,
+            hair.style ~= nil and hair.style or current.style,
+            hair.texture ~= nil and hair.texture or current.texture
+        )
+        SetPedComponentVariation(ped, 2, style, texture, 0)
+    end
+
+    local maxColor = GetMaxVariationIndex(GetNumHairColors(), 0)
+    local color = ClampVariationIndex(hair.color ~= nil and hair.color or current.color, 0, maxColor)
+    local highlight = ClampVariationIndex(hair.highlight ~= nil and hair.highlight or current.highlight, 0, maxColor)
+    SetPedHairColor(ped, color, highlight)
+
+    return {
+        style = style,
+        texture = texture,
+        color = color,
+        highlight = highlight
+    }
+end
+
+local function GetEyeColorValue(ped)
+    return ClampVariationIndex(GetPedEyeColor(ped), 0, EYE_COLOR_MAX)
+end
+
+local function SetPedEyeColorSafe(ped, value)
+    local safeValue = ClampVariationIndex(value, 0, EYE_COLOR_MAX)
+    SetPedEyeColor(ped, safeValue)
+    return safeValue
+end
+
+local function BuildColorPaletteFromNative(count, colorGetter)
+    local palette = {}
+
+    count = tonumber(count) or 0
+    for index = 0, count - 1 do
+        local r, g, b = colorGetter(index)
+        palette[index + 1] = {
+            r = tonumber(r) or 0,
+            g = tonumber(g) or 0,
+            b = tonumber(b) or 0
+        }
+    end
+
+    return palette
+end
+
+local function GetAppearanceColorPalettes()
+    return {
+        hair = BuildColorPaletteFromNative(GetNumHairColors(), GetPedHairRgbColor),
+        makeUp = BuildColorPaletteFromNative(GetNumMakeupColors(), GetPedMakeupRgbColor)
+    }
+end
+
 function ApplySkinToPlayer(skinData, options)
     if not skinData then return end
 
@@ -546,28 +1063,79 @@ function ApplySkinToPlayer(skinData, options)
         LoadAndSetPlayerModel(skinData.model)
         ped = Corex.Functions.GetPed()
     end
-    
+
+    if skinData.headBlend then
+        SetPedHeadBlendSafe(ped, skinData.headBlend)
+    end
+
     if skinData.components then
         for componentId, data in pairs(skinData.components) do
             local id = tonumber(componentId)
             if id and data.drawable and data.texture then
-                SetPedComponentVariation(ped, id, data.drawable, data.texture, 0)
-            end
-        end
-    end
-    
-    if skinData.props then
-        for propId, data in pairs(skinData.props) do
-            local id = tonumber(propId)
-            if id and data.drawable then
-                if data.drawable == -1 then
-                    ClearPedProp(ped, id)
-                else
-                    SetPedPropIndex(ped, id, data.drawable, data.texture or 0, true)
+                local drawable, texture = NormalizeComponentVariation(ped, id, data.drawable, data.texture)
+                if drawable ~= nil then
+                    SetPedComponentVariation(ped, id, drawable, texture, 0)
                 end
             end
         end
     end
+
+    if skinData.faceFeatures then
+        for featureKey, value in pairs(skinData.faceFeatures) do
+            SetPedFaceFeatureValue(ped, featureKey, value)
+        end
+    end
+
+    if skinData.headOverlays then
+        for overlayKey, data in pairs(skinData.headOverlays) do
+            SetPedHeadOverlayValue(ped, overlayKey, data)
+        end
+    end
+
+    if skinData.hair then
+        SetPedHairSettings(ped, skinData.hair)
+    end
+
+    if skinData.eyeColor ~= nil then
+        SetPedEyeColorSafe(ped, skinData.eyeColor)
+    end
+
+    if skinData.props then
+        for propId, data in pairs(skinData.props) do
+            local id = tonumber(propId)
+            if id and data.drawable then
+                local drawable, texture = NormalizePropVariation(ped, id, data.drawable, data.texture)
+                if drawable == -1 then
+                    ClearPedProp(ped, id)
+                elseif drawable ~= nil then
+                    SetPedPropIndex(ped, id, drawable, texture, true)
+                end
+            end
+        end
+    end
+end
+
+local function RefreshCreationCameraView()
+    if not creationCam then
+        return
+    end
+
+    local ped = Corex.Functions.GetPed()
+    if not ped or ped == 0 or not Corex.Functions.DoesEntityExist(ped) then
+        return
+    end
+
+    local panOffset = (currentCreationCamTargetZ - defaultCreationCamTargetZ) * 0.35
+    local camCoords = Corex.Functions.GetOffsetFromEntity(
+        ped,
+        creationCamBaseOffset.x,
+        creationCamBaseOffset.y,
+        creationCamBaseOffset.z + panOffset
+    )
+
+    SetCamCoord(creationCam, camCoords.x, camCoords.y, camCoords.z)
+    SetCamFov(creationCam, currentCamFov)
+    PointCamAtEntity(creationCam, ped, 0.0, 0.0, currentCreationCamTargetZ, true)
 end
 
 function SetupCreationCamera()
@@ -587,15 +1155,11 @@ function SetupCreationCamera()
     if creationCam then
         DestroyCam(creationCam, false)
     end
-    
-    local camCoords = Corex.Functions.GetOffsetFromEntity(ped, 0.0, 2.5, 0.5)
-    
+
     creationCam = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
-    
-    SetCamCoord(creationCam, camCoords.x, camCoords.y, camCoords.z)
-    SetCamFov(creationCam, 45.0)
-    
-    PointCamAtEntity(creationCam, ped, 0.0, 0.0, 0.5, true)
+    currentCamFov = 45.0
+    currentCreationCamTargetZ = defaultCreationCamTargetZ
+    RefreshCreationCameraView()
     
     SetCamActive(creationCam, true)
     RenderScriptCams(true, true, 500, true, false)
@@ -609,6 +1173,9 @@ function DestroyCreationCamera()
         DestroyCam(creationCam, false)
         creationCam = nil
     end
+
+    currentCamFov = 45.0
+    currentCreationCamTargetZ = defaultCreationCamTargetZ
     
     Corex.Functions.FreezeEntity(Corex.Functions.GetPed(), false)
 end
@@ -644,31 +1211,74 @@ function CloseClothingUI()
     SendSpawnReady()
 end
 
+local function BuildSavedSkinData(ped)
+    local skinData = {
+        model = GetCurrentModelName(ped),
+        components = {},
+        props = {},
+        headBlend = GetHeadBlendValues(ped),
+        faceFeatures = GetFaceFeatureValues(ped),
+        headOverlays = GetHeadOverlayValues(ped),
+        hair = GetHairValues(ped),
+        eyeColor = GetEyeColorValue(ped)
+    }
+
+    for i = 0, 11 do
+        skinData.components[tostring(i)] = {
+            drawable = GetPedDrawableVariation(ped, i),
+            texture = GetPedTextureVariation(ped, i)
+        }
+    end
+
+    for i = 0, 7 do
+        skinData.props[tostring(i)] = {
+            drawable = GetPedPropIndex(ped, i),
+            texture = GetPedPropTextureIndex(ped, i)
+        }
+    end
+
+    return skinData
+end
+
 function GetCurrentClothingData()
     local ped = Corex.Functions.GetPed()
     local data = {
+        model = GetCurrentModelName(ped),
         components = {},
-        props = {}
+        props = {},
+        headBlend = BuildHeadBlendUiData(ped),
+        faceFeatures = BuildFaceFeaturesUiData(ped),
+        headOverlays = BuildHeadOverlaysUiData(ped),
+        hair = BuildHairUiData(ped),
+        colorPalettes = GetAppearanceColorPalettes(),
+        eyeColor = {
+            value = GetEyeColorValue(ped),
+            min = 0,
+            max = EYE_COLOR_MAX,
+            step = 1
+        }
     }
-    
+
     for i = 0, 11 do
+        local drawable = GetPedDrawableVariation(ped, i)
         data.components[i] = {
-            drawable = GetPedDrawableVariation(ped, i),
+            drawable = drawable,
             texture = GetPedTextureVariation(ped, i),
-            maxDrawable = GetNumberOfPedDrawableVariations(ped, i),
-            maxTexture = GetNumberOfPedTextureVariations(ped, i, GetPedDrawableVariation(ped, i))
+            maxDrawable = GetMaxVariationIndex(GetNumberOfPedDrawableVariations(ped, i), 0),
+            maxTexture = GetMaxVariationIndex(GetNumberOfPedTextureVariations(ped, i, drawable), 0)
         }
     end
-    
+
     for i = 0, 7 do
+        local drawable = GetPedPropIndex(ped, i)
         data.props[i] = {
-            drawable = GetPedPropIndex(ped, i),
+            drawable = drawable,
             texture = GetPedPropTextureIndex(ped, i),
-            maxDrawable = GetNumberOfPedPropDrawableVariations(ped, i),
-            maxTexture = GetNumberOfPedPropTextureVariations(ped, i, GetPedPropIndex(ped, i))
+            maxDrawable = GetMaxVariationIndex(GetNumberOfPedPropDrawableVariations(ped, i), -1),
+            maxTexture = drawable == -1 and 0 or GetMaxVariationIndex(GetNumberOfPedPropTextureVariations(ped, i, drawable), 0)
         }
     end
-    
+
     return data
 end
 
@@ -679,26 +1289,7 @@ end)
 
 RegisterNUICallback('confirm', function(data, cb)
     local ped = Corex.Functions.GetPed()
-    
-    local skinData = {
-        model = GetEntityModel(ped) == GetHashKey(Config.DefaultFemaleModel) and Config.DefaultFemaleModel or Config.DefaultMaleModel,
-        components = {},
-        props = {}
-    }
-    
-    for i = 0, 11 do
-        skinData.components[tostring(i)] = {
-            drawable = GetPedDrawableVariation(ped, i),
-            texture = GetPedTextureVariation(ped, i)
-        }
-    end
-    
-    for i = 0, 7 do
-        skinData.props[tostring(i)] = {
-            drawable = GetPedPropIndex(ped, i),
-            texture = GetPedPropTextureIndex(ped, i)
-        }
-    end
+    local skinData = BuildSavedSkinData(ped)
     
     savedSkin = skinData
     TriggerServerEvent('corex-spawn:server:saveSkin', skinData)
@@ -712,19 +1303,22 @@ RegisterNUICallback('updateComponent', function(data, cb)
     local componentId = tonumber(data.component)
     local drawableId = tonumber(data.drawable)
     local textureId = tonumber(data.texture) or 0
-    
+
     if componentId ~= nil and drawableId ~= nil then
-        SetPedComponentVariation(ped, componentId, drawableId, textureId, 0)
-        
+        local safeDrawable, safeTexture, maxDrawable, maxTexture = NormalizeComponentVariation(ped, componentId, drawableId, textureId)
+
+        SetPedComponentVariation(ped, componentId, safeDrawable, safeTexture, 0)
+
         currentSkin[componentId] = {
-            drawable = drawableId,
-            texture = textureId
+            drawable = safeDrawable,
+            texture = safeTexture
         }
-        
-        local maxTexture = GetNumberOfPedTextureVariations(ped, componentId, drawableId)
-        
+
         cb({
             success = true,
+            drawable = safeDrawable,
+            texture = safeTexture,
+            maxDrawable = maxDrawable,
             maxTexture = maxTexture
         })
     else
@@ -737,26 +1331,131 @@ RegisterNUICallback('updateProp', function(data, cb)
     local propId = tonumber(data.prop)
     local drawableId = tonumber(data.drawable)
     local textureId = tonumber(data.texture) or 0
-    
+
     if propId ~= nil and drawableId ~= nil then
-        if drawableId == -1 then
+        local safeDrawable, safeTexture, maxDrawable, maxTexture = NormalizePropVariation(ped, propId, drawableId, textureId)
+
+        if safeDrawable == -1 then
             ClearPedProp(ped, propId)
         else
-            SetPedPropIndex(ped, propId, drawableId, textureId, true)
-        end
-
-        local maxTexture = 0
-        if drawableId ~= -1 then
-            maxTexture = GetNumberOfPedPropTextureVariations(ped, propId, drawableId)
+            SetPedPropIndex(ped, propId, safeDrawable, safeTexture, true)
         end
 
         cb({
             success = true,
+            drawable = safeDrawable,
+            texture = safeTexture,
+            maxDrawable = maxDrawable,
             maxTexture = maxTexture
         })
     else
         cb({ success = false })
     end
+end)
+
+RegisterNUICallback('updateHeadBlend', function(data, cb)
+    local ped = Corex.Functions.GetPed()
+    local field = data.field or data.key
+
+    if not field then
+        cb({ success = false })
+        return
+    end
+
+    local result = SetPedHeadBlendSafe(ped, {
+        [field] = data.value
+    })
+
+    cb({
+        success = true,
+        value = result[field],
+        headBlend = BuildHeadBlendUiData(ped)
+    })
+end)
+
+RegisterNUICallback('updateFaceFeature', function(data, cb)
+    local ped = Corex.Functions.GetPed()
+    local feature = data.feature or data.key
+
+    if not feature then
+        cb({ success = false })
+        return
+    end
+
+    local value = SetPedFaceFeatureValue(ped, feature, data.value)
+    if value == nil then
+        cb({ success = false })
+        return
+    end
+
+    cb({
+        success = true,
+        value = value
+    })
+end)
+
+RegisterNUICallback('updateHeadOverlay', function(data, cb)
+    local ped = Corex.Functions.GetPed()
+    local overlay = data.overlay
+    local payload = data.data or data
+
+    if not overlay then
+        cb({ success = false })
+        return
+    end
+
+    local result = SetPedHeadOverlayValue(ped, overlay, payload)
+    if not result then
+        cb({ success = false })
+        return
+    end
+
+    cb({
+        success = true,
+        overlay = result
+    })
+end)
+
+RegisterNUICallback('updateHairSetting', function(data, cb)
+    local ped = Corex.Functions.GetPed()
+    local field = data.field or data.key
+
+    if not field then
+        cb({ success = false })
+        return
+    end
+
+    local result = SetPedHairSettings(ped, {
+        [field] = data.value
+    })
+
+    cb({
+        success = true,
+        value = result[field],
+        hair = BuildHairUiData(ped),
+        component = {
+            drawable = result.style,
+            texture = result.texture,
+            maxDrawable = GetMaxVariationIndex(GetNumberOfPedDrawableVariations(ped, 2), 0),
+            maxTexture = GetMaxVariationIndex(GetNumberOfPedTextureVariations(ped, 2, result.style), 0)
+        }
+    })
+end)
+
+RegisterNUICallback('updateEyeColor', function(data, cb)
+    local ped = Corex.Functions.GetPed()
+    local value = SetPedEyeColorSafe(ped, data.value)
+
+    cb({
+        success = true,
+        value = value,
+        eyeColor = {
+            value = value,
+            min = 0,
+            max = EYE_COLOR_MAX,
+            step = 1
+        }
+    })
 end)
 
 RegisterNUICallback('changeGender', function(data, cb)
@@ -765,10 +1464,7 @@ RegisterNUICallback('changeGender', function(data, cb)
     
     LoadAndSetPlayerModel(model)
     Wait(100)
-    
-    local ped = Corex.Functions.GetPed()
-    SetPedDefaultComponentVariation(ped)
-    
+    RefreshCreationCameraView()
     local clothingData = GetCurrentClothingData()
     
     cb({
@@ -790,10 +1486,6 @@ RegisterNUICallback('rotateCharacter', function(data, cb)
     cb('ok')
 end)
 
-local currentCamFov = 45.0
-local minFov = 20.0
-local maxFov = 80.0
-
 RegisterNUICallback('zoomCamera', function(data, cb)
     if not creationCam then
         cb('ok')
@@ -809,7 +1501,29 @@ RegisterNUICallback('zoomCamera', function(data, cb)
         currentCamFov = math.min(maxFov, currentCamFov + zoomAmount)
     end
     
-    SetCamFov(creationCam, currentCamFov)
+    RefreshCreationCameraView()
+    
+    cb('ok')
+end)
+
+RegisterNUICallback('panCamera', function(data, cb)
+    if not creationCam then
+        cb('ok')
+        return
+    end
+
+    local deltaY = tonumber(data.deltaY) or 0.0
+    if deltaY ~= deltaY then
+        deltaY = 0.0
+    end
+
+    deltaY = math.max(-50.0, math.min(50.0, deltaY))
+    currentCreationCamTargetZ = math.max(
+        minCreationCamTargetZ,
+        math.min(maxCreationCamTargetZ, currentCreationCamTargetZ - (deltaY * creationCamPanSensitivity))
+    )
+
+    RefreshCreationCameraView()
     
     cb('ok')
 end)
