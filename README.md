@@ -139,7 +139,29 @@ Double-click `FXServer/FXServer.exe`.
 
 ---
 
-## txAdmin Setup (first run)
+## 🖥️ How to Open txAdmin
+
+txAdmin runs **locally on your own PC** as soon as you start FXServer. There is no public website — you open it through your browser at:
+
+### 👉 http://localhost:40120
+
+**Steps:**
+1. Run `FXServer.exe` (a console window opens — keep it running).
+2. The console prints:
+   ```
+   All ready! Please access:
+     http://localhost:40120/
+   ```
+3. Open that URL in any browser (Chrome / Firefox / Edge).
+4. First time only — set a PIN, link Cfx.re, and finish the setup wizard.
+
+> **Useful:** bookmark <http://localhost:40120/> in your browser so you can open txAdmin in one click.
+
+Official txAdmin site & docs: <https://github.com/citizenfx/txAdmin>
+
+---
+
+## txAdmin Setup Wizard (first run)
 
 1. Set PIN → link Cfx.re (or local admin)
 2. **Deployment Type:** `Existing Server Data`
