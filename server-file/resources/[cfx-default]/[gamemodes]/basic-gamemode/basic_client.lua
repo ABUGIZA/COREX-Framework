@@ -1,5 +1,0 @@
-AddEventHandler('onClientMapStart', function()
-  pcall(function()
-    exports.spawnmanager:setAutoSpawn(false)
-  end)
-end)

@@ -1,9 +1,0 @@
-.DS_Store
-Thumbs.db
-*.bak
-*.tmp
-*.log
-.vscode/
-.idea/
-node_modules/
-package-lock.json

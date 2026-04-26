@@ -2,17 +2,17 @@
 
 > Modern FiveM Zombie-Survival framework — Lua 5.4, oxmysql, StateBag sync.
 
-- 📖 **Full Documentation:** <https://corex-zombies.gitbook.io/corex-docs>
-- 💬 **Discord Community:** <https://discord.gg/G95rtnb9sg>
-
 ---
 
-## ⚡ Install COREX in One Click
+## ⚠️ Installation Method Has Changed
 
-The recommended way to deploy a full COREX server is through the **txAdmin recipe**. It downloads every resource, sets up the database, and pre-configures `server.cfg` for you.
+The old method of cloning this repository to install COREX is **deprecated**. All framework files have been removed from this repo.
 
-👉 **Full step-by-step guide + video tutorial:**
+### 👉 Install COREX via the new txAdmin Recipe
+
 **<https://github.com/corex-zombies/txAdminRecipe>**
+
+The recipe automatically downloads every script, sets up the database, and pre-configures `server.cfg` for you in one click.
 
 ```
 https://raw.githubusercontent.com/corex-zombies/txAdminRecipe/main/corex.yaml
@@ -20,13 +20,18 @@ https://raw.githubusercontent.com/corex-zombies/txAdminRecipe/main/corex.yaml
 
 Paste that URL into the **Remote URL Template** field in the txAdmin setup wizard.
 
+A full walkthrough (with video) is available in the recipe repo.
+
 ---
 
-## 🎬 Video Tutorial
+## Useful Links
 
-[![Watch the install video](https://img.youtube.com/vi/Y7mIvYN7gVo/maxresdefault.jpg)](https://youtu.be/Y7mIvYN7gVo)
-
-▶ <https://youtu.be/Y7mIvYN7gVo>
+| | |
+|---|---|
+| 📦 Install Recipe | <https://github.com/corex-zombies/txAdminRecipe> |
+| 🧩 All Scripts | <https://github.com/corex-zombies> |
+| 📖 Documentation | <https://corex-zombies.gitbook.io/corex-docs> |
+| 💬 Discord | <https://discord.gg/G95rtnb9sg> |
 
 ---
 
@@ -50,33 +55,6 @@ Every COREX script lives in its own repo under [`corex-zombies`](https://github.
 | `corex-zones`      | <https://github.com/corex-zombies/corex-zones> |
 | `corex-redzones`   | <https://github.com/corex-zombies/corex-redzones> |
 | `corex-loot`       | <https://github.com/corex-zombies/corex-loot> |
-
----
-
-## API — Quick Reference
-
-### Server
-```lua
-local player = Corex.Functions.GetPlayer(source)
-Corex.Functions.AddMoney(source, 'cash', 500)
-Corex.Functions.SetMetaData(source, 'hunger', 100)
-Corex.Functions.SavePlayer(source)
-```
-
-### Client
-```lua
-local data = Corex.Functions.GetPlayerData()
-local cash = Corex.Functions.GetMoney('cash')
-```
-
-### From another resource
-```lua
--- fxmanifest.lua
-dependencies { 'corex-core' }
-
--- main.lua
-local Corex = exports['corex-core']:GetCoreObject()
-```
 
 ---
 
