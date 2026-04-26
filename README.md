@@ -40,6 +40,23 @@ Full install & run walkthrough:
 
 ---
 
+## ⚡ One-Click Install (txAdmin Recipe)
+
+Skip the manual setup entirely. In **txAdmin** setup wizard:
+
+1. **Deployment Type** → `Remote URL Template`
+2. Paste this URL:
+   ```
+   https://raw.githubusercontent.com/corex-zombies/txAdminRecipe/main/corex.yaml
+   ```
+3. Click **Next** — txAdmin downloads everything, sets up the database, and configures `server.cfg` automatically.
+
+After install, just open `server.cfg` and set your `sv_licenseKey` and `mysql_connection_string`.
+
+Recipe repo: <https://github.com/corex-zombies/txAdminRecipe>
+
+---
+
 ## Quick Start
 
 ### 1. Clone
